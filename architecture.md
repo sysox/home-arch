@@ -53,7 +53,7 @@ Pi is the coordination hub but must never be a single point of failure for actua
 | Capability | Pi offline | Pi online |
 |---|---|---|
 | SSH between devices | ✓ Tailscale routes independently | ✓ |
-| VS Code Remote SSH | ✓ | ✓ |
+| VS Code Remote SSH | ✓ if target ThinkPad is already awake | ✓ |
 | Development on any machine | ✓ | ✓ |
 | Git — local and GitHub push/pull | ✓ | ✓ |
 | Syncthing between ThinkPads | ✓ peer-to-peer continues | ✓ |
@@ -62,7 +62,7 @@ Pi is the coordination hub but must never be a single point of failure for actua
 | Wake-on-LAN | ✗ manual only | ✓ |
 | Job scheduling and routing | ✗ | ✓ |
 | File catalog and iPhone apps | ✗ | ✓ |
-| Nightly sync orchestration | ✗ Syncthing continues, verification paused | ✓ |
+| Nightly sync orchestration | ✗ Syncthing continues peer-to-peer while both ThinkPads are awake; scheduled wake and verification unavailable | ✓ |
 
 When Pi fails: core work never stops, automation and iPhone services pause. The system degrades gracefully rather than failing completely.
 
@@ -72,9 +72,9 @@ When Pi fails: core work never stops, automation and iPhone services pause. The 
 
 | Device | RAM | Storage | Role | Local AI | Cloud AI |
 |---|---|---|---|---|---|
-| MacBook Air M5 | 32 GB | 512 GB SSD | Primary workstation | 30B+ models | Claude, GPT, Gemini |
-| Linux ThinkPad T14 Gen 1 | 16 GB | 1 TB NVMe | Linux workstation + compute node | 7–13B headless | Claude if needed |
-| Windows ThinkPad T14 Gen 1 | 16 GB | 1 TB NVMe | Windows/WSL workstation + compute node | 7–13B headless | Claude if needed |
+| MacBook Air M5 | 32 GB | 512 GB SSD | Primary workstation | ~20–30B quantized | Claude, GPT, Gemini |
+| Linux ThinkPad T14 Gen 1 | 16 GB | 1 TB NVMe | Linux workstation + compute node | ~7–13B quantized | Claude if needed |
+| Windows ThinkPad T14 Gen 1 | 16 GB | 1 TB NVMe | Windows/WSL workstation + compute node | ~7–13B quantized | Claude if needed |
 | Raspberry Pi 5 | 8 GB | 32 GB microSD | Always-on hub + app backend | None required | — |
 | iPhone | — | — | Display terminal for Pi services | — | Claude, GPT, Gemini apps |
 
@@ -87,7 +87,7 @@ When Pi fails: core work never stops, automation and iPhone services pause. The 
 **Runs:**
 - VS Code with Remote SSH (develops on Mac, executes on Linux ThinkPad)
 - AI-assisted development (Claude, GPT, Gemini, or local model depending on task)
-- Local AI models via Ollama + MLX (30B+ models, benefits from Neural Engine)
+- Local AI models via Ollama + MLX (approximately 20–30B quantized, hardware-accelerated inference)
 - Browser, communication, writing, research
 
 **Data stored:**
@@ -95,7 +95,7 @@ When Pi fails: core work never stops, automation and iPhone services pause. The 
 - Inactive projects move to ThinkPads; may return when active work resumes
 - Local AI models (selective — 512 GB fills quickly)
 
-**AI:** strongest local inference in the setup — 30B+ models via Ollama/MLX. Cloud models for tasks exceeding local quality.
+**AI:** strongest local inference in the setup — approximately 20–30B quantized models via Ollama/MLX. Cloud models for tasks exceeding local quality.
 
 ---
 
@@ -110,7 +110,7 @@ When Pi fails: core work never stops, automation and iPhone services pause. The 
 - Python, C/C++ toolchain, compilers
 - Python virtual environments and systemd services
 - Docker or Podman when needed for reproducibility or conflicting dependencies
-- Local AI via Ollama (7–13B, CPU-only, headless batch)
+- Local AI via Ollama (approximately 7–13B quantized, CPU-only, headless batch; validate per model)
 - Syncthing — mirrors data with Windows ThinkPad
 - Job agent — receives tasks from Pi, reports completion
 
@@ -175,9 +175,12 @@ AI may advise for ambiguous natural-language inputs only. Privacy, security, spe
 {
   "name": "paper.pdf",
   "path": "research/cryptography/",
-  "size": "2.4 MB",
+  "size": 2516582,
   "modified": "2026-07-09",
-  "device": "linux-laptop"
+  "locations": [
+    "linux-thinkpad",
+    "windows-thinkpad"
+  ]
 }
 ```
 ~20 MB for 100,000 files. Built by periodic scan — derived, always reconstructable. Future: add content hash, tags, and richer metadata when simple name/path search is insufficient.
@@ -192,15 +195,17 @@ AI may advise for ambiguous natural-language inputs only. Privacy, security, spe
 **Deployment model:** lightweight native services (Python venv + systemd) by default. Containers only for third-party services that genuinely require them.
 
 **Deployment reproducibility:**
-Pi must be rebuildable without manual steps. Three categories:
+Pi must be rebuildable through a documented, idempotent bootstrap process with minimal manual intervention. Four categories of state:
 
 *Stored in Git:* service definitions, setup scripts, schemas, routing rules, deployment config.
 
-*Backed up to ThinkPad periodically:* calendar, task data, application user data. Not committed to Git — too mutable, may contain personal data.
+*Periodic recovery copy to ThinkPad:* calendar, task data, application user data. Not committed to Git — too mutable, may contain personal data.
 
-*Reconstructed automatically:* file catalog, job queue, logs, transient state.
+*Rebuildable derived state:* file catalog, device status cache — reconstructed automatically after rebuild.
 
-Rebuild = restore config from Git + restore user data from most recent ThinkPad backup.
+*Disposable transient state:* logs, temporary scheduler state, incomplete jobs — discarded on rebuild. Incomplete jobs surface as `unknown` and are restarted by the user.
+
+Rebuild = apply bootstrap from Git + restore user data from most recent ThinkPad recovery copy.
 
 **Local AI:** not required. Deterministic rules work without any model. A tiny model (1–3B) may be added if resources permit and a specific use case justifies it.
 
@@ -239,20 +244,17 @@ Research implementation and student-facing services. Uptime expectations due to 
 ### Lab Working Group Machines
 128 GB machines — potential large-model inference. Nothing installed yet.
 
-### Occasional Devices
-Parents' laptop and tablet are occasionally managed devices, not part of the infrastructure.
-
 ---
 
 ## 8. Network — Tailscale
 
-All core devices run Tailscale (WireGuard-based overlay). Each device gets a permanent virtual IP that never changes regardless of location.
+All core devices run Tailscale (WireGuard-based overlay). Each device has a stable Tailscale identity and MagicDNS name. Its virtual IP is normally stable but must not be hard-coded as permanent configuration.
 
 **Devices:** MacBook, Linux ThinkPad, Windows ThinkPad, Raspberry Pi, iPhone.
 
 **Why:** devices span different networks (school, home, mobile), university firewalls block direct connections, enterprise Wi-Fi isolates devices, Mac IP changes constantly.
 
-All inter-device communication uses Tailscale virtual IPs — VS Code Remote SSH, Syncthing, Pi APIs, file transfers, health checks. No port forwarding or firewall rules required.
+All normal IP-based inter-device communication uses Tailscale virtual IPs — VS Code Remote SSH, Syncthing, Pi APIs, file transfers, health checks. Wake-on-LAN is the exception and operates on the physical local network. No public port forwarding is required. Device firewalls must allow the required services on the Tailscale interface.
 
 ```
 Mac (anywhere)
@@ -260,7 +262,7 @@ Mac (anywhere)
     ├──► Pi (always-on)
     ├──► Linux ThinkPad
     └──► Windows ThinkPad
-         (same IP regardless of location)
+         (reachable through the same MagicDNS name regardless of location)
 ```
 
 ---
@@ -270,9 +272,9 @@ Mac (anywhere)
 | Tier | Device | Models | When to use |
 |---|---|---|---|
 | Large-scale compute + AI | Metacentrum | Large models + HPC | Massive parallel experiments, simulations, large-model inference, training |
-| Heavy local | MacBook Air M5 | 30B+ via Ollama/MLX | Privacy, offline, fast iteration, no token cost |
-| Medium local | Linux ThinkPad | 7–13B via Ollama | Headless batch, overnight jobs |
-| Medium local | Windows ThinkPad | 7–13B via Ollama | Headless batch, Windows-side tasks |
+| Heavy local | MacBook Air M5 | ~20–30B quantized via Ollama/MLX | Privacy, offline, fast iteration, no token cost |
+| Medium local | Linux ThinkPad | ~7–13B quantized via Ollama | Headless batch, overnight jobs |
+| Medium local | Windows ThinkPad | ~7–13B quantized via Ollama | Headless batch, Windows-side tasks |
 | Cloud | Claude, GPT, Gemini | Frontier models | Highest quality — select per task, data policy, and cost |
 | Optional tiny local | Raspberry Pi | 1–3B if resources permit | Advisory classification only |
 | Future | Lab working group machines (128 GB) | TBD | Alternative when Metacentrum unavailable |
@@ -312,7 +314,8 @@ additional reviewer when justified
 **File lifecycle:**
 ```
 Active working set
-  MacBook (512 GB)
+  Current workstation
+  (MacBook, Linux ThinkPad, or Windows ThinkPad)
         ↓ move when no longer active
 Persistent replicated store
   Linux ThinkPad (1 TB) ◄── Syncthing ──► Windows ThinkPad (1 TB)
@@ -333,8 +336,8 @@ Persistent replicated store
 
 | Type | Created on | Example |
 |---|---|---|
-| Code | MacBook (written), Linux ThinkPad (built) | Python scripts, C binaries |
-| Documents | MacBook | Notes, research, design docs |
+| Code | MacBook, Linux ThinkPad, or Windows ThinkPad / WSL | Python scripts, C binaries |
+| Documents | MacBook or Windows ThinkPad | Notes, research, design docs |
 | Office files | Windows ThinkPad | PPT, Word, Excel |
 | Build artifacts | Linux ThinkPad | Compiled binaries, test results |
 | Experiment results | Linux ThinkPad / anxur / Metacentrum | Logs, model outputs, datasets |
@@ -348,9 +351,9 @@ Persistent replicated store
 | Data | Primary | Mirror | Note |
 |---|---|---|---|
 | Code | Git (GitHub) | Pi bare repo (optional) | Pi mirror only if offline access needed |
-| Active files | MacBook | ThinkPads via periodic rsync | Every 5–15 min while working |
+| Active files | Current workstation | ThinkPads via periodic rsync | Every 5–15 min while working |
 | Linux/Windows data | Linux ThinkPad ↔ Windows ThinkPad | Syncthing | Device-failure redundancy only |
-| Pi data | microSD | ThinkPad periodic backup | Config in Git, user data backed up |
+| Pi data | microSD | ThinkPad periodic recovery copy | Config in Git, user data in recovery copy |
 | AI models | MacBook / ThinkPads | Re-downloadable | Low priority |
 
 ### Sync — nightly window
@@ -369,6 +372,8 @@ counts differ → Pi flags mismatch, keeps laptops on for investigation
 ```
 
 Pi is not a Syncthing relay. Sync is peer-to-peer. Pi orchestrates timing and verifies results.
+
+File-count comparison is a basic sanity check only; equal counts do not guarantee identical content.
 
 Full hierarchical hash verification is a future optional enhancement.
 
@@ -393,18 +398,63 @@ Pi does not proxy bytes for desktop clients.
 
 Files normally have one active device at a time. When simultaneous edits happen: Syncthing preserves both versions as conflict copies, conflict shown in Pi dashboard, resolution is manual.
 
+Pi periodically scans for Syncthing conflict files and notifies the user when any are found.
+
+Conflicts from automation are prevented by directory conventions — automated writers must not share Syncthing-managed paths across devices:
+
+```
+shared/
+  documents/          user-managed files — one active device at a time
+
+recovery/
+  macbook/            written only by MacBook rsync
+  linux-thinkpad/     written only by Linux ThinkPad rsync
+  windows-thinkpad/   written only by Windows ThinkPad rsync
+
+local/                not in Syncthing
+  logs/
+  builds/
+  caches/
+```
+
 *Requires implementation validation: the single-owner assumption must be confirmed in practice.*
 
 ### Active Work Protection
 
-Periodic rsync (every 5–15 minutes while working) copies changed files from the active device to one reachable ThinkPad. Syncthing replicates to the second ThinkPad on the next sync window.
+Periodic rsync (every 5–15 minutes while working) copies changed files from the active device to one reachable ThinkPad. Syncthing replicates to the second ThinkPad on the next sync window. `.git` directories are excluded — see Git protection.
 
-- No sleep interception required
-- `sync_status: dirty` records when no ThinkPad was reachable during the last rsync attempt; survives reboot
-- On reconnection, rsync runs immediately
-- Excluded: caches, model weights, build outputs, reproducible data
+**RPO:** active-work protection has an expected recovery point objective equal to the configured rsync interval. The system does not guarantee zero-loss protection for work created between the last successful rsync and an unexpected device failure.
+
+**Pre-sleep attempt:** before a controlled sleep, the device attempts a best-effort rsync. Sleep is never blocked — this is an additional non-blocking attempt, not an interception.
+
+**Protection state** (tracked per device, reported to Pi):
+- `protected` — last rsync completed within the interval and no subsequent file activity detected
+- `overdue` — elapsed time since last rsync exceeds the interval; work may exist that is not yet protected
+- `unavailable` — no reachable ThinkPad for rsync
+
+`protection_status: overdue` or `unavailable` marks that active work is not fully protected. Pi prioritizes sync and notifies before dispatching new jobs to a device with non-protected status. On reconnection, rsync runs immediately and status returns to `protected`.
+
+**Excluded from rsync:** `.git` directories, caches, model weights, build outputs, reproducible data.
 
 Mirror and rsync protect against device failure only — not against deletion, corruption, or ransomware.
+
+### Git protection
+
+Three categories of Git state require different protection:
+
+```
+Working tree (uncommitted changes)
+  → protected by periodic rsync snapshot to ThinkPad
+  → rsync target is a recovery snapshot — not a second active checkout
+
+Local commits (not yet pushed)
+  → protected by periodic automatic git push, or git bundle as fallback
+
+Remote history (pushed)
+  → stored on GitHub — authoritative and durable
+```
+
+Active-work rsync excludes `.git`. Local commits not yet pushed are protected separately through a recovery push to a private remote branch, or an atomically created Git bundle (written to a temporary name, then atomically renamed before transfer to ThinkPad). Working tree files are covered by rsync; Git history is covered by Git itself.
 
 ### File catalog
 
@@ -414,18 +464,22 @@ Pi maintains a lightweight file catalog rebuilt by periodic scan after each Sync
 {
   "name": "paper.pdf",
   "path": "research/cryptography/",
-  "size": "2.4 MB",
+  "size": 2516582,
   "modified": "2026-07-09",
-  "device": "linux-laptop"
+  "locations": [
+    "linux-thinkpad",
+    "windows-thinkpad"
+  ]
 }
 ```
 
-The catalog is derived and always reconstructable. Content hash, tags, canonical metadata records, SQLite search index, and real-time filesystem agents are future additions — add when name/path search is insufficient.
+Each ThinkPad scans its local shared directories and reports results to Pi. Pi merges the scan results into the derived catalog — Pi has no direct filesystem access to the ThinkPads. Content hash, tags, canonical metadata records, SQLite search index, and real-time filesystem agents are future additions — add when name/path search is insufficient.
 
 ### Rules
 - Secrets never in Git — managed separately
-- MacBook holds the active working set — inactive projects move to ThinkPads
+- The current workstation holds the active working set. MacBook is the primary workstation, but active work may also originate on either ThinkPad. Inactive projects move to ThinkPads.
 - Code repositories via Git only, not Syncthing
+- Automated processes must not write concurrently to the same Syncthing-managed paths; logs, caches, and build outputs are excluded from Syncthing; recovery snapshots use per-device directories
 
 ---
 
@@ -497,7 +551,7 @@ Laptops normally sleep. Pi wakes them via Wake-on-LAN when needed.
 
 **Power budget:** Pi ~5 W + each ThinkPad (sleep) ~1 W = ~7 W total. All hosted at school — electricity cost zero.
 
-**After job completion:** return to sleep if wired. If on Wi-Fi, remain awake — WoL requires same-LAN as Pi and is unavailable over Wi-Fi at a different location.
+**After job completion:** return to sleep if wired. A Wi-Fi-only device may remain awake only while externally powered and when remote availability is required. On battery, it follows its normal sleep policy — jobs remain queued until it reconnects. The architecture already tolerates offline devices.
 
 ---
 
@@ -518,10 +572,11 @@ linux-laptop:
     - compilation
     - docker
     - local-ai
-  sync_status: clean        # clean | dirty | unknown
+  protection_status: protected  # protected | overdue | unavailable | unknown
+  mirror_status: in-sync        # in-sync | syncing | conflict | unknown
 ```
 
-`sync_status: dirty` is set when active-work rsync failed on the last attempt. Pi uses this to prioritize sync and notify before dispatching new jobs.
+`protection_status` tracks active-work rsync state. `mirror_status` tracks Syncthing sync state. Pi uses both to prioritize sync and notify before dispatching new jobs.
 
 **Scheduler matching:**
 ```
@@ -534,7 +589,7 @@ mac: matches → dispatch if linux unavailable
 
 **Parallel dispatch:** a query returning N matches dispatches N jobs simultaneously — AI parallelization, compute parallelization, and redundant execution all use the same mechanism.
 
-**Future fields** (add when the scheduler actually needs them): `ram_gb`, `load`, `gpu`, `gpu_vram_gb`, `storage_free_gb`, `cost_class`, `data_policy`, `wake_capabilities` per sleep state, `wake_status.wol_currently_available`.
+Additional resource, cost, and wake-state properties may be introduced when required by real scheduling decisions.
 
 **Extensibility:** adding a new device requires only registering its capabilities. No scheduler changes needed.
 
@@ -559,11 +614,11 @@ Applications       time management, BTC, English learning, AI assistant
 | Time Management | Raspberry Pi | iPhone, Mac | Always-on backend |
 | English Learning | Raspberry Pi | iPhone, Mac | Always-on backend |
 | Remote Execution | Linux ThinkPad | Mac, Windows ThinkPad | SSH target for VS Code Remote and job dispatch |
-| Local AI — heavy | MacBook Air M5 | Local, Pi requests | 30B+ via Ollama/MLX |
-| Local AI — batch | ThinkPads | Pi dispatch | 7–13B via Ollama |
+| Local AI — heavy | MacBook Air M5 | Local, Pi requests | ~20–30B quantized via Ollama/MLX |
+| Local AI — batch | ThinkPads | Pi dispatch | ~7–13B quantized via Ollama |
 | Cloud AI | Claude / GPT / Gemini | Mac, Pi coordinator | Frontier models |
 
-Adding a new device or service means registering capabilities and adding a row. No other component changes.
+Adding a compatible device requires only capability registration. Adding a new service may require a new adapter or implementation, but should not require redesigning the core architecture.
 
 ---
 
@@ -581,7 +636,7 @@ The system exposes queryable state — answers to questions you will ask while d
 | Failed jobs | Scheduler log | Pi dashboard, iPhone notification |
 | Storage free per device | Device registry | Pi dashboard |
 
-**Future signals** (add when needed): AI cost and token usage per model, job queue depth, wake failures, device uptime, metadata consistency, energy estimates.
+Additional signals (cost, queue depth, uptime, energy) may be added when operational experience shows they are needed.
 
 All signals queryable on demand — not only on anomaly.
 
@@ -607,7 +662,7 @@ Proportional to a personal infrastructure — practical hardening without enterp
 
 Research is `cloud-eligible` by default. Exceptions treated as `local-only`: embargoed work, patent-sensitive material, contractual restrictions, confidential review material, undisclosed vulnerabilities until patched or published.
 
-**Encryption:** full-disk encryption on ThinkPads and MacBook.
+**Encryption:** full-disk encryption is optional and may be enabled on portable devices when justified by theft risk, sensitive data, or institutional policy.
 
 **SSH:** key-based authentication, password SSH disabled, separate key per client device.
 
@@ -643,7 +698,7 @@ Research is `cloud-eligible` by default. Exceptions treated as `local-only`: emb
                                  │
                     ┌────────────┴──────────────────────────┐
                     │        Tailscale Overlay Network        │
-                    │   (all devices, static virtual IPs)     │
+                    │  (all devices, stable MagicDNS names)   │
                     └────────────┬──────────────────────────┘
                                  │
          ┌───────────────────────┼───────────────┐
@@ -693,7 +748,7 @@ Pi handles scheduling and lightweight services. Computation goes to ThinkPads, M
 SQLite when JSON scanning is too slow. Real-time agents when periodic scan is too slow. Extended capability fields when the scheduler actually needs them. Start without; add when the need is proven.
 
 **Local first.**
-Free local models before paid cloud. Sensitive data stays on the machine. Direct peer-to-peer sync before any relay.
+Free local models before paid cloud. `local-only` data never leave trusted local devices. `institutional-restricted` data may use only local processing or explicitly approved institutional services. Direct peer-to-peer sync before any relay.
 
 **Rebuildable state.**
 Anything derived can be deleted and reconstructed. Pi catalog, SQLite indexes, build artifacts — none are authoritative. Authoritative state lives in durable synced files or Git.
