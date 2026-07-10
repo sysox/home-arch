@@ -2,6 +2,12 @@
 
 ---
 
+## Architecture Vision
+
+A personal distributed computing environment where heterogeneous devices cooperate as a single system. The infrastructure minimizes AI costs, maximizes reuse of existing hardware, reduces manual work, and provides seamless access to computation, data, and applications regardless of which physical device is in use.
+
+---
+
 ## Goals
 
 1. Minimize paid AI usage — prefer free local, institutional, and open models.
@@ -14,6 +20,52 @@
 8. Recover easily from device failure.
 9. Avoid unnecessary infrastructure and hardware.
 10. Support gradual extension without redesigning the whole system.
+11. Minimize transmitted context — retrieve, filter, and compress before sending data to any AI model.
+
+---
+
+## Constraints and Non-Goals
+
+**Assumptions:**
+- Single-user system — no multi-tenant access control needed
+- Core devices are trusted — no zero-trust enforcement within the Tailscale network
+- Tailscale is the private network boundary
+- Laptops may frequently be offline — the system must tolerate this gracefully
+- Pi is the only mandatory always-on node
+- No high-availability requirement — brief Pi downtime is acceptable
+- Internet and cloud services may be temporarily unavailable
+- Each workstation must remain usable independently if Pi fails
+
+**Non-goals:**
+- Building a general-purpose distributed operating system
+- Replacing professional versioned backup infrastructure
+- Automatic conflict resolution for all file types
+- Running large models on Raspberry Pi
+- Keeping every file on every device at all times
+- Building Kubernetes-style container orchestration
+- Enterprise multi-user orchestration or access management
+
+---
+
+## Failure Philosophy
+
+Pi is the coordination hub but must never be a single point of failure for actual work. Every core development capability must remain available when Pi is offline.
+
+| Capability | Pi offline | Pi online |
+|---|---|---|
+| SSH between devices | ✓ Tailscale routes independently | ✓ |
+| VS Code Remote SSH | ✓ | ✓ |
+| Development on any machine | ✓ | ✓ |
+| Git — local and GitHub push/pull | ✓ | ✓ |
+| Syncthing between ThinkPads | ✓ peer-to-peer continues | ✓ |
+| Active work rsync to ThinkPad | Conditional — only if a ThinkPad is already awake; without Pi, sleeping ThinkPads cannot be woken | ✓ |
+| File access on ThinkPads | ✓ | ✓ |
+| Wake-on-LAN | ✗ manual only | ✓ |
+| Job scheduling and routing | ✗ | ✓ |
+| File catalog and iPhone apps | ✗ | ✓ |
+| Nightly sync orchestration | ✗ Syncthing continues, verification paused | ✓ |
+
+When Pi fails: core work never stops, automation and iPhone services pause. The system degrades gracefully rather than failing completely.
 
 ---
 
@@ -21,7 +73,7 @@
 
 | Device | RAM | Storage | Role | Local AI | Cloud AI | Frontend | Creates | Backed up by |
 |---|---|---|---|---|---|---|---|---|
-| MacBook Air M5 | 32 GB | 512 GB SSD | Primary workstation | 30B+ models | Claude, GPT, Gemini | VS Code, Claude Code, browser | Code, docs, notes, configs | Laptops (completed work) |
+| MacBook Air M5 | 32 GB | 512 GB SSD | Primary workstation | 30B+ models | Claude, GPT, Gemini | VS Code, Claude Code, browser | Code, docs, notes, configs | ThinkPads via rsync (active work) |
 | Linux ThinkPad T14 Gen 1 | 16 GB | 1 TB NVMe | Linux workstation + compute node | 7–13B headless | Claude if needed | VS Code, terminal; VS Code Remote SSH target | Build artifacts, experiment results, logs | Windows ThinkPad (Syncthing mirror — device-failure redundancy) |
 | Windows ThinkPad T14 Gen 1 | 16 GB | 1 TB NVMe | Windows/WSL workstation + compute node | 7–13B headless | Claude if needed | Windows desktop, Office, VS Code Remote SSH to Linux | Office docs, Windows outputs, WSL artifacts | Linux ThinkPad (Syncthing mirror — device-failure redundancy) |
 | Raspberry Pi 5 | 8 GB | 32 GB microSD | Always-on hub + app backend | None required; optional tiny model | — | Web dashboard, SSH entry point | Job metadata, logs, calendar, file catalog | Laptops (lightweight data only) |
@@ -34,7 +86,7 @@
 | Device | Role | AI | Frontend |
 |---|---|---|---|
 | anxur (faculty server) | Medium-scale computation | TBD | SSH, terminal |
-| Metacentrum (HPC grid) | Hundreds of machines — parallel computation + large AI models available | Large models + GPU nodes | SSH, job scheduler (PBS/Slurm) |
+| Metacentrum (HPC grid) | Elastic large-scale compute: massive parallel scientific workloads and large AI model execution | Large models + GPU nodes | SSH, job scheduler (PBS/Slurm) |
 | Lab working group machines | 128 GB machines — potential large model inference | Nothing installed yet — future option | SSH |
 | Lab server | Research implementation + student-facing services | TBD | Student web interface, admin |
 | Parents' laptop | Occasional managed device | — | Standard desktop |
@@ -54,9 +106,9 @@
 - Control interfaces for Pi and both laptops
 
 **Data stored:**
-- Active working files and current projects
-- Files are working copies — completed work moves to laptops for long-term storage
-- Local AI models (selective — 512 GB fills fast)
+- Active working set — projects currently being worked on, frequently used documents, selected local copies
+- Inactive projects move to the ThinkPads, which provide the larger persistent replicated store; projects may return to MacBook when active work resumes
+- Local AI models (selective — 512 GB fills quickly)
 
 **Development workflow:**
 - Write code on Mac
@@ -91,7 +143,7 @@
 **RAM constraint:** 16 GB is restrictive. Running a 14B model consumes ~9–10 GB, leaving ~6 GB for OS, Docker, and builds. Heavy compilation and AI batch jobs must not run simultaneously — schedule one or the other. The Pi scheduler enforces this: before dispatching a local AI job to a ThinkPad, it checks `load` and available RAM headroom from the capability registry. If a build is already running, the AI job is queued, not dispatched.
 
 **Data stored:**
-- Full mirror of Windows ThinkPad (mutual backup)
+- Syncthing mirror of Windows ThinkPad — device-failure redundancy only, not versioned backup
 - Linux repositories and build environments
 - Experiment data and results
 - Archived models
@@ -146,7 +198,7 @@ Fallback:  WSL locally
 - Cross-platform validation
 
 **Data stored:**
-- Full mirror of Linux ThinkPad (mutual backup)
+- Syncthing mirror of Linux ThinkPad — device-failure redundancy only, not versioned backup
 - Office documents and Windows-specific projects
 - WSL repositories and Linux environments
 
@@ -181,18 +233,11 @@ WSL filesystem
 - Sync orchestration — triggers nightly sync window and on-demand transfers
 - Merkle hash registry — stores directory hashes from both laptops, verifies sync
 
-**Task routing — deterministic rules first:**
-
-The Pi scheduler primarily uses deterministic rules. AI may assist only for ambiguous natural-language requests.
-
-```
-Rules make enforceable decisions.
-AI may advise or classify when the input is ambiguous.
-```
+**Task routing — deterministic rules first** (see Design Principles — *Rule before AI*):
 
 Deterministic routing rules (examples):
 ```
-student or protected school data  → Gemini Edu or local processing
+student or protected institutional data → institutionally approved service or local processing
 privacy-sensitive data            → local processing only
 Windows-native task               → Windows ThinkPad
 Linux build or Docker task        → Linux ThinkPad
@@ -210,7 +255,7 @@ AI advisory (for ambiguous natural-language requests only):
 - estimating whether cloud AI is needed
 - deciding whether another review pass is useful
 
-**Critical constraint:** decisions involving privacy, security, spending, data deletion, shutdown, or access control must never depend solely on an AI model. The rule engine validates or overrides any AI recommendation.
+**Critical constraint:** privacy, security, spending, data deletion, shutdown, and access control decisions must never depend solely on a model — the rule engine validates or overrides.
 
 **File catalog (lightweight):**
 Pi maintains a small catalog of all files across both laptops:
@@ -226,7 +271,7 @@ Pi maintains a small catalog of all files across both laptops:
 ```
 - Total catalog size: ~20 MB for 100,000 files — safe on microSD
 - Any device fetches catalog from Pi to browse available files
-- On-demand file requests: Pi wakes appropriate laptop, transfers file to requesting device
+- On-demand file requests: Pi wakes source laptop and coordinates direct transfer to requesting device — Pi does not proxy bytes
 - iPhone uses catalog for file browsing — no files stored on iPhone
 
 **Always-on application backends:**
@@ -234,27 +279,32 @@ Pi maintains a small catalog of all files across both laptops:
 - English learning app (iPhone connects here)
 - Calendar and task data
 - Status dashboard
-- Notification push to iPhone
 
 **Automation:**
 - Cron jobs and schedulers
 - Device monitoring and health checks
 - Nightly sync window: wakes both laptops, waits for Syncthing idle, verifies Merkle hashes, sleeps both
-- On-demand transfer: wakes source laptop, returns its address to requesting device — data flows directly between devices, Pi does not proxy bytes
+- On-demand transfer: wakes source laptop, coordinates transfer — desktop clients connect directly, mobile clients use a temporary endpoint on the source device
 - Notification push to iPhone
 
 **Storage strategy:**
-- microSD only: OS, config, small services, file catalog, calendar, job metadata, logs
-- No large data — Pi coordinates data movement but does not store files
-- **Write wear protection:** logs routed to RAM via log2ram or volatile journald — batched to card periodically, not written per-event. Monitoring agents write at low frequency (e.g. every 60s), not on every state change. This eliminates the main cause of microSD wear without requiring an external SSD.
+- microSD only: OS, config, small services, file catalog, calendar, job metadata, logs, small bare Git repositories
+- Not bulk storage: no user datasets, document archives, large project files, or model weights — Pi must never become a NAS or the only authoritative location of important user data
+- **Write wear protection:** logs handled via a write-efficient strategy — RAM-buffered, flushed periodically, not written per-event. Monitoring agents write at low frequency (e.g. every 60s), not on every state change. This eliminates the main cause of microSD wear without requiring an external SSD.
 
 **Deployment model (Pi services):**
+Lightweight native services (Python venv + systemd) by default. Containers only for third-party services that genuinely require them.
 
-Prefer for small custom services:
-```
-Python virtual environment + systemd service + config file + journald logs
-```
-Containers may be used for third-party applications substantially easier to deploy as containers. Avoid containers for simple Python services — they add storage and operational overhead on a 32 GB microSD card.
+**Deployment reproducibility (architectural requirement):**
+Pi is the coordination hub — microSD failure is its most likely failure mode. Pi must be fully rebuildable without manual steps. This requires separating two categories:
+
+*Reproducible configuration — stored in Git:*
+service definitions, setup scripts, schemas, static policies, routing rules, deployment configuration.
+
+*Recoverable runtime state — periodically exported to a ThinkPad, not committed to Git:*
+calendar and task data, job queue, scheduler state, file catalog, application state, usage logs.
+
+Git restores configuration. The ThinkPad export restores runtime state. Neither substitutes for the other. Runtime state must never be committed to Git — it is mutable, may contain personal data, and changes too frequently. Rebuild restores configuration from Git first, then runtime state from the most recent ThinkPad export.
 
 **Local AI on Pi:**
 
@@ -295,11 +345,20 @@ The architecture must function correctly even when no model is running on the Pi
 - Specs TBD
 
 ### Metacentrum (HPC Cluster)
-- National grid of hundreds of computers and thousands of cores
-- Nodes range from small memory to very large memory machines
-- GPU nodes available for model training and large inference
-- Accessed via job submission (SSH + PBS/Slurm scheduler)
-- Suited for massively parallel jobs, large experiments, training runs
+
+MetaCentrum is the elastic large-scale compute backend for both scientific research workloads and large AI workloads.
+
+**Scientific and research compute:**
+- Massively parallel experiments, parameter sweeps, simulations
+- Cryptographic research and data-heavy workloads
+- Long-running CPU and GPU jobs spanning many machines or cores
+
+**Large AI workloads:**
+- Large-model inference and parallel inference
+- Model evaluation, possible fine-tuning or training where resources and policy allow
+- AI workloads that exceed MacBook and ThinkPad capacity
+
+Accessed via job submission (SSH + PBS/Slurm scheduler). National grid of hundreds of machines and thousands of cores; GPU nodes available.
 
 ### Lab Server
 - Research implementation and experiments
@@ -356,7 +415,7 @@ Mac (anywhere)
 | Tier | Device | Models | When to use |
 |---|---|---|---|
 | Highest quality | Cloud — Claude, GPT, Gemini | Frontier models | Best output quality — all three are equally valid choices |
-| Large scale + AI | Metacentrum | Large models + HPC | Long parallel jobs, large inference, training |
+| Large-scale compute + AI | Metacentrum | Large models + HPC + parallel scientific compute | Massive parallel experiments, simulations, large-model inference, training, model evaluation |
 | Heavy local | MacBook Air M5 | 30B+ via Ollama/MLX | Privacy, offline, no token cost, fast iteration |
 | Medium local | Linux ThinkPad | 7–13B via Ollama | Headless batch, overnight jobs |
 | Medium local | Windows ThinkPad | 7–13B via Ollama | Headless batch, Windows-side tasks |
@@ -371,20 +430,34 @@ Mac (anywhere)
 |---|---|---|
 | Claude | Paid (own) | Highest quality output, coding, architecture, reasoning — use selectively |
 | GPT | Paid tier 2 | Coding, general tasks, second opinion — use selectively |
-| Gemini | Edu — school pays | School and research work, Google Workspace — use freely. **Guaranteed not to train on input data** → approved for sensitive student data (grades, personal info, research data) |
+| Gemini | Edu — school pays | School work and Google Workspace. Primary use: student data (grades, personal info) that requires institutional data handling per university policy and service agreement |
 | Local models | Ollama/MLX on Mac | Privacy-sensitive work, offline, fast iteration, zero cost |
+
+**Default escalation path:**
+```
+deterministic tool or rule
+        ↓
+local model where sufficient
+        ↓
+one selected cloud model where quality requires it
+        ↓
+additional reviewer model only when justified
+        ↓
+three-model consensus — exceptional tasks only
+```
 
 **Task routing:**
 
 | Task type | AI approach | Cost |
 |---|---|---|
-| High quality reasoning, coding, architecture | Automated 3-LLM consensus loop — Claude + GPT + Gemini iterate until all satisfied | Paid (Claude + GPT) + Gemini edu |
-| Document tasks — structure, polish, summarize | Metacentrum large models or Mac M5 local | Free |
+| Simple decisions, routing, classification | Deterministic rules or Pi tiny local | Free |
+| Small / atomic coding tasks | Small local models (Mac or ThinkPad) | Free |
 | Coding — multiple projects parallel | Local Mac M5 + Metacentrum | Free |
-| Small / atomic coding tasks | Small local models | Free |
-| School / student data | Gemini edu (data protection guaranteed) | School pays |
-| Simple decisions, routing | Pi tiny local | Free |
+| Document tasks — structure, polish, summarize | Metacentrum large models or Mac M5 local | Free |
+| School / student data | Gemini edu (per university policy and service agreement) | School pays |
 | Privacy sensitive | Local only — nothing leaves the machine | Free |
+| Quality-critical — one model sufficient | Single cloud model: Claude, GPT, or Gemini | Paid (one) |
+| Exceptional quality-critical tasks | 3-LLM consensus loop — bounded by hard iteration and spending limits | Paid (multiple) |
 
 **3-LLM consensus loop (concept — implementation details TBD):**
 ```
@@ -396,29 +469,38 @@ loop continues until convergence
         ↓ (hard maximum iterations + spending limit enforced)
 final output returned
 ```
-Used for quality-critical tasks only. Pi orchestrates API calls.
+Optional and exceptional — used only when single-model quality is insufficient and the task justifies the cost. Pi orchestrates API calls.
 
-Implementation details to be decided later: convergence criteria, satisfaction scoring, reviewer roles, model ordering, handling disagreements. **Required constraints:** every run must have a hard maximum iteration count and a spending limit.
+A fixed pipeline (Writer → Reviewer → Reviewer → Synthesizer) is an acceptable simpler alternative — bounded by design, predictable call count, easier to implement. Both satisfy the architectural requirements as long as spending and iteration limits are enforced.
+
+Implementation details to be decided: pipeline vs iterative choice, convergence criteria, reviewer roles, model ordering, disagreement handling. **Required constraints:** hard maximum iteration count and spending limit on every run.
 
 ---
 
 ## 11. Storage and Data Flow
 
+**Terminology:**
+- **Mirror / replica:** current synchronized copy — does not protect against deletion, corruption, or ransomware
+- **Backup:** recoverable historical or versioned copy — not currently implemented, planned future addition
+- **Archive:** long-term retained data
+- **Cache:** disposable and rebuildable — can be deleted without data loss
+- **Authoritative source:** canonical representation from which all derived state is rebuilt
+
 **File lifecycle:**
 ```
-Active
-  MacBook (working now, 512 GB)
-        ↓ move when done
-Inactive / Archive
+Active working set
+  MacBook (512 GB)
+        ↓ move when no longer active
+Persistent replicated store
   Linux ThinkPad (1 TB) ◄── Syncthing ──► Windows ThinkPad (1 TB)
-        replicated working copy — device-failure redundancy
+        device-failure redundancy — not versioned backup
 ```
 
 **External drives:** not part of permanent infrastructure. Used only for data transport or emergency recovery when a laptop is damaged.
 
 **Mirror limitation:** Syncthing replication protects against device failure but not against accidental deletion, corruption, or ransomware — a bad change replicates to both laptops. Future versioned or offline backup can be added later.
 
-**Raspberry Pi:** small persistent data only — calendar, configs, job metadata, lightweight file index. No large data, no external SSD.
+**Raspberry Pi:** lightweight operational data only — calendar, configs, job metadata, file catalog, logs, small bare Git repositories. No user files, no datasets, no model weights, no external SSD.
 
 **File metadata:** canonical JSON records live in `metadata/records/`, synced via Syncthing to both ThinkPads. Each device may build a local SQLite search index from these records — disposable, never synced. Pi holds a lightweight file catalog only (name, path, size, hash, location).
 
@@ -448,7 +530,7 @@ Inactive / Archive
 | Data | Primary location | Backup | Archive |
 |---|---|---|---|
 | Code | Git (Pi mirror) | GitHub / remote | — |
-| Active files | MacBook | Moves to laptops when done | — |
+| Active files | MacBook | Moves to ThinkPads when no longer active | — |
 | Linux/Windows data | Linux ThinkPad ↔ Windows ThinkPad | Syncthing mirror — device-failure redundancy only (not protection against deletion/corruption) | External drive (emergency transport only) |
 | Pi persistent data | Pi microSD | Lightweight only — offload large data to laptops | — |
 | Office documents | Windows ThinkPad | Linux ThinkPad (Syncthing) | — |
@@ -460,7 +542,7 @@ Inactive / Archive
 ```
 MacBook (active work)
         │ rsync on sleep/shutdown → active work protected
-        │ completed work → move
+        │ inactive projects → move to ThinkPads
         ▼
 Linux ThinkPad ◄── Syncthing ──► Windows ThinkPad
   (replicated working copy — device-failure redundancy)
@@ -499,17 +581,22 @@ Pi checks catalog → knows which laptop has it
         ↓
 Pi wakes source laptop, returns its Tailscale address to requesting device
         ↓
-requesting device pulls file directly from source laptop (SSH/SFTP/rsync)
-Pi does not proxy the data
+Desktop clients (Mac, Windows): pull file directly from source laptop via SSH/SFTP/rsync
+Mobile clients (iPhone): source laptop exposes a temporary authenticated HTTPS endpoint;
+  iPhone fetches via HTTPS — Pi may proxy small files as a controlled exception
         ↓
 source laptop sleeps (Pi notified on completion)
 ```
 
-**Important:** Pi is NOT a Syncthing relay or storage node. Sync happens peer-to-peer directly between laptops. Pi only orchestrates timing and verifies results.
+**Transfer principle:** desktop clients transfer directly — Pi does not proxy bytes. Mobile clients use a temporary authenticated endpoint on the source device; Pi may act as a controlled proxy only when a direct mobile connection to the source is impractical. Pi is never a Syncthing relay or persistent storage node.
+
+**Important:** Sync between laptops happens peer-to-peer directly via Tailscale. Pi only orchestrates timing and verifies results.
 
 ### Sync conflict handling
 
-Simultaneous editing of the same file on both laptops should be uncommon — files normally have one active owner at a time, and the workflow is designed around one primary device per task. When it happens:
+Simultaneous editing of the same file on both laptops should be uncommon — files normally have one active owner at a time, and the workflow is designed around one primary device per task. *Requires implementation validation: the single-owner assumption must be confirmed to hold in practice.*
+
+When it happens:
 
 - Syncthing preserves both versions as conflict copies — no conflicting version is automatically deleted
 - The conflict is flagged in the Pi file catalog and status dashboard
@@ -542,6 +629,8 @@ Pi asks Windows: hash(documents/) = aaa111  →  out of sync → drill down
 
 **Race condition prevention:** Merkle hash calculation only triggers after Syncthing API reports `idle` and `100% completion` on both laptops. Never computed during active transfer.
 
+*Requires implementation validation: idle detection reliability and performance on large directory trees must be confirmed in practice.*
+
 ### Metadata architecture
 
 No embeddings — plain text and tag search only.
@@ -559,6 +648,8 @@ Per device (not synced — derived from records, disposable):
 ```
 
 **Authoritative source:** JSON metadata records in `metadata/records/`. These are synchronized via Syncthing and are the only canonical store.
+
+**Write ownership:** Each metadata record has one active owner device — the device where the file was created or last explicitly managed. Other devices may read records and build local indexes but must not modify records they do not own. Ownership transfers when a file is explicitly moved or reassigned. This prevents conflicting updates to the authoritative store when both devices are offline simultaneously and resolves the multi-writer problem without requiring distributed coordination.
 
 **SQLite is derived data:** generated from JSON records as a disposable local search index. It can be deleted and rebuilt at any time without data loss. It must never be synchronized between devices.
 
@@ -580,14 +671,19 @@ Each metadata record:
 }
 ```
 
-Metadata agents watch for file changes and update JSON records:
-- Linux: inotify
-- Mac: FSEvents
-- Windows: ReadDirectoryChangesW
+Metadata agents use filesystem event monitoring to watch for file changes and update JSON records.
+
+**Metadata agent correctness — idempotent processing:** Agents must not attempt to distinguish Syncthing-generated events from user-generated events at the filesystem level. Once Syncthing completes a file operation, the resulting event is indistinguishable from a local edit. Instead, agents must be designed so that processing any event is safe regardless of origin:
+
+- Metadata updates are idempotent — processing the same file twice produces the same record, not a duplicate
+- Record identity is determined by content hash and logical path — not by the event that triggered processing
+- Temporary Syncthing work files (identified by naming convention) are excluded from processing; final replicated files are indexed normally
+- Agents debounce and batch events to reduce unnecessary reprocessing
+- The result: Syncthing replication and local edits are handled identically and safely
 
 ### Active Work Protection
 
-Unfinished work on any device must be copied before sleep or shutdown to a protected shared location on both ThinkPads.
+The system attempts to protect unfinished work by copying it to a ThinkPad before controlled sleep or shutdown. This applies to cooperative shutdown paths only — lid close, crash, battery depletion, OS update, and forced shutdown may bypass the sync step. For these cases, the persistent `sync_status: dirty` flag records that protection has not completed and survives device reboot. Periodic incremental sync (not only on shutdown) reduces the exposure window.
 
 **Mechanism roles:**
 ```
@@ -617,6 +713,7 @@ Not all devices need to be online before a device may sleep — only one ThinkPa
 
 **Failure behaviour:**
 - rsync attempt has a hard timeout (e.g. 30 seconds) — if no ThinkPad is reachable within that time, the attempt fails gracefully; sleep is never blocked indefinitely
+- *Requires implementation validation: rsync timeout behavior and macOS sleep assertion reliability must be tested before relying on this mechanism*
 - If rsync fails or times out → notify user
 - Interactive shutdown → ask whether to continue without sync
 - Automated shutdown → postpone if unsynchronized changes exist and a ThinkPad is reachable; proceed after timeout if unreachable
@@ -626,11 +723,11 @@ Not all devices need to be online before a device may sleep — only one ThinkPa
 
 ### Rules
 - Secrets never in Git — managed separately (e.g. environment files, vault)
-- Completed work leaves MacBook — 512 GB is a workspace, not an archive
+- MacBook holds the active working set — 512 GB is a workspace, not a persistent archive; inactive projects move to ThinkPads and return when active work resumes
 - Code repositories are not synced via Syncthing — Git only
-- Same content hash = same file — one metadata record, multiple location entries
+- Same content hash = same content object — one metadata record with multiple location entries; logically distinct files with identical content are rare but may require separate records identified by logical path
 - Merkle hashes computed only after Syncthing reports idle — never during transfer
-- Pi stores file catalog only — not files, not full metadata DB
+- Pi stores lightweight operational data only — not user files, not full metadata DB; Git repos on Pi are bare mirrors, not user data stores
 - JSON metadata records are authoritative — SQLite is a disposable derived index only
 
 ---
@@ -684,6 +781,10 @@ Pi / anxur / Metacentrum / Lab server
 
 Laptops are normally in **sleep** (preferred) or fully powered off. Pi wakes them via Wake-on-LAN when a task requires them.
 
+**WoL operates at Layer 2 (physical LAN), not over Tailscale (Layer 3).** Pi sends the magic packet directly to the laptop's MAC address on the local subnet broadcast address. Tailscale is used only after the device is awake. WoL therefore requires Pi and the target laptop to be on the same physical network segment. When they are on different subnets, WoL is unavailable — the device must use Profile B (always-on) or be woken by other means.
+
+**WoL availability is a runtime property, not a static capability.** Before attempting WoL, the scheduler checks `wake_status.wol_currently_available` from the capability registry. A device may support WoL from sleep but not from hibernation or shutdown. Network changes, VLAN assignments, filtered broadcasts, or loss of standby power can make WoL unavailable even for a device that previously supported it.
+
 **Wake mechanism — priority order:**
 
 **1. Sleep + Wake-on-LAN** (preferred)
@@ -691,13 +792,13 @@ Laptops are normally in **sleep** (preferred) or fully powered off. Pi wakes the
 - Apps, LLM servers, indexes, cache remain in memory — ready immediately
 - Power: ~1 W per laptop (~2 €/year per device)
 - Test first: run 100 WoL attempts, accept only if fully reliable
-- **Linux ThinkPad status:** WoL supported on `enp2s0f0` and `enp5s0` (`Supports Wake-on: pumbg`), currently disabled — enable with `ethtool -s enp2s0f0 wol g`
-- **Caution:** current sleep mode is **S2idle** (Modern Standby), not S3 — WoL reliability must be tested. Check BIOS for **Sleep State → Linux (S3)** option.
+- **Linux ThinkPad status:** WoL confirmed supported, currently disabled — requires OS network configuration
+- **Caution:** current sleep mode is S2idle (Modern Standby), not S3 — WoL reliability must be tested before relying on it; S3 sleep may be configurable in BIOS
 
 **2. Hibernation + WoL** (if supported)
 - RAM saved to SSD, power ~0 W
 - Resume where left off
-- **Linux ThinkPad status:** swap is only 4 GB, RAM is 16 GB — hibernation requires expanding swap to ≥16 GB first. WoL from S4 also unverified.
+- Requires swap ≥ RAM size and verified WoL from S4 — neither confirmed on current hardware
 
 **3. Full shutdown + WoL from S5**
 - Power: 0 W, no extra hardware
@@ -709,7 +810,7 @@ Laptops are normally in **sleep** (preferred) or fully powered off. Pi wakes the
 Raspberry Pi
       │ API command
       ▼
-Smart Plug (~$15 each)
+Smart Plug
       │ AC power restored
       ▼
 BIOS: Power on after AC restore
@@ -761,24 +862,6 @@ A laptop in sleep is not just a compute node — it can keep a local LLM server,
 - Startup agent that reports readiness to Pi
 - **"Power on after AC restore" enabled in BIOS** on Pi, Linux ThinkPad, and Windows ThinkPad — ensures automatic reboot after electrical outage without manual intervention
 
-**Pi device registry:**
-```yaml
-devices:
-  linux-laptop:
-    mac: "..."
-    ip: "..."
-    os: linux
-    wake_method: wol
-    capabilities: [linux, docker, compilation, local-ai]
-
-  windows-laptop:
-    mac: "..."
-    ip: "..."
-    os: windows-wsl
-    wake_method: wol
-    capabilities: [windows, wsl, office, local-ai]
-```
-
 **After job completion:**
 - If wired (Profile A): return to sleep (~1 W) — preferred, keeps LLM servers and state in memory
 - If wireless (Profile B): remain awake (always-on mandate)
@@ -795,23 +878,37 @@ Each device advertises its capabilities to Pi at startup and on state change. Th
 ```yaml
 linux-laptop:
   tailscale_ip: "100.64.0.3"
-  mac: "aa:bb:cc:dd:ee:ff"
+  mac: "aa:bb:cc:dd:ee:ff"      # WoL target — Layer 2
+  lan_broadcast: "192.168.1.255" # subnet broadcast for WoL packet
   os: linux
   wake_method: wol
   capabilities:
     ram_gb: 16
     gpu: false
+    gpu_vram_gb: 0
     docker: true
     compilation: true
     local_ai: true          # Ollama 7–13B
     office: false
     storage_free_gb: 900
     holds_metadata: true
+    cost_class: local-free  # local-free | institutional | paid-api
+    data_policy: cloud-eligible  # local-only | institutional-restricted | cloud-eligible
+    internet_access: false
+    availability: on-demand # interactive | on-demand | batch
+  wake_capabilities:
+    sleep: verified         # WoL from sleep — tested and confirmed
+    hibernate: unverified   # WoL from S4 — not confirmed on current hardware
+    shutdown: unsupported   # WoL from S5 — not confirmed on current hardware
   status:
     online: true
     load: 0.3               # normalized 0.0–1.0
     power_profile: A        # A=wired/sleep, B=wifi/always-on
     battery_pct: null       # null = plugged in
+    sync_status: clean      # clean | dirty | unknown
+    wake_status:
+      same_lan_as_pi: true
+      wol_currently_available: true  # runtime: is WoL usable right now?
 ```
 
 **Scheduler matching:**
@@ -840,21 +937,103 @@ all three dispatched simultaneously, results collected
 
 This generalizes: AI parallelization (same prompt to multiple models), compute parallelization (independent workloads across devices), and redundant execution (same job on two devices, first result wins) all use the same matching mechanism. The scheduler asks for N matches instead of one.
 
+**Dirty state tracking:** a device sets `sync_status: dirty` when active-work rsync failed on its last sleep — Pi has no other way to know unsynced work exists. On reconnection, the device reports this status to Pi. Pi uses it to prioritize sync and notify the user before dispatching new jobs to that device.
+
 **Why this matters:** new devices register their capabilities. The scheduler needs no changes. The same matching logic that routes jobs today will route to a Mac mini, a GPU workstation, or a lab machine without modification.
 
 **Capability categories:**
-- **Hardware:** `ram_gb`, `gpu`, `storage_free_gb`
+- **Hardware:** `ram_gb`, `gpu`, `gpu_vram_gb`, `storage_free_gb`
 - **Software:** `docker`, `compilation`, `local_ai`, `office`, `holds_metadata`
-- **Wake:** `wake_method` (`wol`, `always_on`, `smart_plug`)
-- **Status (dynamic):** `online`, `load`, `power_profile`, `battery_pct`
+- **Policy:** `cost_class`, `data_policy` (`local-only` | `institutional-restricted` | `cloud-eligible`), `internet_access`, `availability`
+- **Wake capabilities (static):** `wake_capabilities.sleep`, `.hibernate`, `.shutdown` — `verified` | `unverified` | `unsupported`; `mac`, `lan_broadcast`
+- **Status (dynamic):** `online`, `load`, `power_profile`, `battery_pct`, `sync_status`; `wake_status.same_lan_as_pi`, `wake_status.wol_currently_available`
 
 The device registry in Section 14 is a subset of this — wake configuration lives there. Full capability records live here and are the authoritative input to the scheduler.
 
 ---
 
-## 16. Security
+## 16. Service Catalog
+
+The architecture is organized in three layers:
+
+```
+Resources          CPU, RAM, GPU, storage, network
+     ↓
+Services           scheduler, metadata, LLM, file catalog, search, git, notification
+     ↓
+Applications       time management, BTC, English learning, research, AI assistant
+```
+
+Services are the software components that run on top of hardware resources and are consumed by other devices or applications. Thinking in services — not devices — makes the system behave like a distributed operating system.
+
+| Service | Runs on | Clients | Notes |
+|---|---|---|---|
+| Scheduler | Raspberry Pi | All devices | Job routing, WoL, capability matching |
+| File Catalog | Raspberry Pi | All devices | Lightweight name/path/hash/location index |
+| Notification | Raspberry Pi | iPhone | Push alerts and status |
+| Git Mirror | Raspberry Pi | All devices | Central bare repo, synced to GitHub offsite |
+| Time Management | Raspberry Pi | iPhone, Mac | Always-on backend |
+| English Learning | Raspberry Pi | iPhone, Mac | Always-on backend |
+| Metadata Store | ThinkPads (synced) | All devices | Authoritative JSON records via Syncthing |
+| Search | ThinkPads | Mac, iPhone | SQLite index built from metadata records |
+| Remote Execution | Linux ThinkPad | Mac, Windows ThinkPad | SSH target for VS Code Remote and job dispatch |
+| Local AI — heavy | MacBook Air M5 | Local, Pi requests | 30B+ models via Ollama/MLX |
+| Local AI — batch | ThinkPads | Pi dispatch | 7–13B models via Ollama |
+| Cloud AI | Claude / GPT / Gemini | Mac, Pi coordinator | Frontier models, 3-LLM consensus loop |
+
+Adding a new device or service means registering its capabilities and adding a row here. No other component needs to change.
+
+---
+
+## 17. Observability
+
+The system exposes queryable state — not just alerts, but answers to questions you will ask while developing, debugging, or deciding what to run next.
+
+| Signal | Source | Exposed via |
+|---|---|---|
+| Devices online / offline | Capability registry | Pi dashboard, Mac |
+| Device uptime | Capability registry | Pi dashboard |
+| Last sync timestamp | Syncthing API | Pi dashboard |
+| Sync consistency | Merkle hash registry | Pi dashboard |
+| Sync conflicts | Syncthing conflict log | Pi dashboard, iPhone notification |
+| AI cost today | API call log | Pi dashboard |
+| AI cost this month | API call log (aggregated) | Pi dashboard |
+| LLM usage per model and provider | Per-model call log | Pi dashboard |
+| Estimated tokens / context sent | API call log | Pi dashboard |
+| Job queue depth | Scheduler | Pi dashboard |
+| Failed jobs | Scheduler log | Pi dashboard, iPhone notification |
+| Wake failures | WoL log | Pi dashboard |
+| Storage free per device | Capability registry | Pi dashboard |
+| Metadata consistency | Hash comparison | Pi dashboard |
+| Energy estimate (optional) | Device state + power profile | Pi dashboard |
+
+The Pi status dashboard is the primary observability interface. iPhone receives push notifications for critical signals: failed jobs, sync mismatch, wake failure, low storage. All signals are queryable on demand — not just surfaced on anomaly. Energy values are estimates derived from device state and expected power draw; no specialized hardware is required.
+
+**Goal coverage check:** every goal has at least one observability signal — AI cost signals cover goal 1, device uptime covers goal 8, sync consistency covers goal 4, storage signals cover goal 9.
+
+---
+
+## 18. Security
 
 Proportional to a personal infrastructure — practical hardening without enterprise complexity.
+
+**Trust boundaries:**
+- Tailscale network is the security perimeter — all core devices are mutually trusted within it
+- Pi APIs, SSH endpoints, and Syncthing are accessible only within the Tailscale network
+- External services (cloud AI, GitHub) are reached from inside the perimeter; they receive only what is explicitly sent
+- No service is exposed to the public internet directly
+
+**Data classification:**
+
+| Class | Meaning | May be processed by |
+|---|---|---|
+| `local-only` | Credentials, private keys, undisclosed vulnerabilities (until patched or published) | Local models and tools only — never sent to any external service |
+| `institutional-restricted` | Student data (grades, personal info) subject to university policy | Institutionally approved services (currently Gemini edu per service agreement) or local processing |
+| `cloud-eligible` | Research code, papers, experiments, general work — research is public by default | Any trusted cloud service: Claude, GPT, Gemini, GitHub |
+
+Research data and code are `cloud-eligible` by default — the intent is to publish. The exception is an undisclosed vulnerability or weakness: this is `local-only` from discovery until the fix is released or responsible disclosure is complete.
+
+This classification maps directly to the `data_policy` field in the capability registry and to the Pi scheduler routing rules.
 
 **Encryption:**
 - Full-disk encryption on both ThinkPads and MacBook
@@ -877,7 +1056,7 @@ Proportional to a personal infrastructure — practical hardening without enterp
 - **Recovery:** critical credentials must have a durable recovery copy — password manager, or encrypted recovery file stored separately from the machines it unlocks. Plaintext `.env` files must not be the only durable copy of a credential. Institutional secrets stored in institutional systems (university IT, not personal hardware only).
 
 **Data protection:**
-- Student and research data handled only via Gemini edu (data protection guaranteed) or local models
+- Student and protected institutional data handled only through institutionally approved services (currently Gemini edu, per university policy and service agreement) or local processing
 - Sensitive data never sent to Claude/GPT without explicit decision
 - Logs must not contain sensitive data (student names, grades, API keys)
 - Log retention policy: rotate and delete old logs
@@ -895,7 +1074,7 @@ Proportional to a personal infrastructure — practical hardening without enterp
 
 ---
 
-## 17. Applications
+## 19. Applications
 
 | App | Backend | Frontend | Notes |
 |---|---|---|---|
@@ -903,11 +1082,11 @@ Proportional to a personal infrastructure — practical hardening without enterp
 | English learning | Raspberry Pi | iPhone, Mac | Pi decides what to do and when; UI later |
 | File management | Shared JSON metadata records + optional local index + Pi lightweight catalog | Mac, iPhone | Content-hash metadata, plain text/tag search, on-demand file transfer |
 | BTC trading | Pi (always-on logic) + Linux ThinkPad (analysis) | Mac, iPhone | Pi runs continuously, heavy analysis offloaded |
-| 3-LLM consensus loop | Raspberry Pi (orchestrator) | Mac | Pi calls Claude + GPT + Gemini iteratively until all satisfied; used for quality-critical tasks |
+| 3-LLM consensus loop | Raspberry Pi (coordinator) | Mac | Pi calls Claude + GPT + Gemini iteratively until all satisfied; used for quality-critical tasks |
 
 ---
 
-## 18. System Diagram
+## 20. System Diagram
 
 ```
                               Cloud LLMs
@@ -926,7 +1105,7 @@ Proportional to a personal infrastructure — practical hardening without enterp
 │ Primary control │◄──►│ Always-on hub   │◄──►│ Pi apps  │
 └────────┬────────┘    └─────────┬───────┘    └──────────┘
          │ VS Code               │ Wake (WoL if wired)
-         │ Remote SSH            │ Orchestrate / Catalog
+         │ Remote SSH            │ Coordinate / Catalog
          │                ┌──────┴──────────┐
          │                │                 │
          └───────────────►│ Linux ThinkPad  │◄── VS Code Remote SSH ──┐
@@ -945,7 +1124,7 @@ Extended:
 
 ---
 
-## 19. Design Principles
+## 21. Design Principles
 
 These principles underlie every decision in this document. When implementing months later and a design question arises, the answer should follow directly from one of these.
 
@@ -958,8 +1137,8 @@ Deterministic rules decide first. AI may classify or advise when input is ambigu
 **Simple before complex.**
 Python venv and systemd before Docker. JSON files before SQLite. A working plain implementation before an optimized one. Add complexity only when the simpler thing demonstrably fails.
 
-**Coordinator, not storage.**
-Pi orchestrates — it wakes devices, routes jobs, tracks catalog entries, verifies sync. It does not store files. When Pi fails, data is safe on the laptops.
+**Coordinator, not bulk storage.**
+Pi orchestrates — it wakes devices, routes jobs, tracks catalog entries, verifies sync. It stores lightweight operational state (config, scheduler state, job metadata, calendar, file catalog, logs, small bare Git repositories) but not user datasets, document archives, large project files, or model weights. When Pi fails, user data remains safe on the ThinkPads.
 
 **Coordinator, not compute.**
 Pi handles scheduling and lightweight services. Computation goes to ThinkPads, Mac, or Metacentrum. Pi must never become a bottleneck for work that another device handles better.
@@ -978,3 +1157,6 @@ Data flows between devices directly. Pi coordinates — it wakes the source and 
 
 **No mandatory always-on services except Pi.**
 Laptops sleep when idle. Mac goes wherever the user goes. Only Pi stays on permanently. Everything else is woken on demand, used, and returned to sleep.
+
+**Minimize transmitted context.**
+Before sending anything to an AI model: retrieve only what is relevant, filter noise, compress where possible. The goal is not just fewer tokens — it is a retrieve → filter → compress → send pipeline. AI cost and latency scale with context size, not just model calls.
