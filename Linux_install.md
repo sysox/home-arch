@@ -174,8 +174,10 @@ Voliteľné: codex (@openai/codex) + **bubblewrap** (nutná závislosť pre Code
 ## Fáza 7 — matematicko-kryptografický výskum (nové, doplnené)
 
 ```
-sagemath
-fplll
+sagemath    # VYNECHANÉ 2026-07-13 — nie je apt balík na Ubuntu 26.04 (dropnuté upstream, iba
+            # osirotené sagemath-database-* zostali). Zatiaľ bez náhrady; revidovať cez
+            # PPA alebo conda-forge/micromamba, ak bude sage skutočne potrebný.
+fplll-tools # skutočný apt balík (nie "fplll")
 fpylll
 gmpy2
 pycryptodome
@@ -270,40 +272,55 @@ powertop
 
 ## Voliteľné / doplniť neskôr (po otestovaní základu)
 
+Stav k 2026-07-13: časť nainštalovaná (Fáza 15 v skripte), zvyšok zostáva odložený.
+
 ```
+# NAINŠTALOVANÉ (Fáza 15):
+jupyterlab       # cez uv tool install, nie apt/system Python
+ocrmypdf
+tesseract        # apt balík sa volá tesseract-ocr
+rclone
+lazygit          # presunuté do Fázy 12
+direnv           # presunuté do Fázy 12
+watchexec / entr # entr nainštalovaný ako náhrada (watchexec nie je apt balík)
+trivy            # nie je apt balík, oficiálny install.sh do ~/.local/bin
+afl++
+tea (Gitea CLI klient)  # POZOR: apt balík "tea" je iný program (Qt textový editor,
+                        # name collision) — skutočný Gitea CLI je binary release
+                        # z gitea.com, inštaluje sa do ~/.local/bin
+libntl-dev
+libflint-dev
+libsodium-dev
+
+# ZÁMERNE ODLOŽENÉ (rozhodnutie 2026-07-13, nie chyba):
+systemd-zram-generator  # balík auto-aktivuje 4GB zram swap hneď pri apt install
+                        # (vlastný default config), čo obchádza pravidlo "testovať
+                        # pred zapnutím" — inštalovať ručne až pri skutočnej potrebe
+sympy                   # knižnica, nie CLI — pridať cez 'uv add sympy' per-projekt,
+                        # nedáva zmysel globálny install pod per-projektovou .venv architektúrou
+pari-gp                 # nainštalovaný (Fáza 15) — CAS náhrada za chýbajúci sagemath
+sagemath                # VYNECHANÉ — pozri poznámku pri Fáze 7, nie je apt balík na tomto Ubuntu
+
+# ZATIAĽ NEINŠTALOVANÉ (nízka priorita / čaká na konkrétnu potrebu):
 browser-use
 aider
 files-to-prompt
 gemini-cli
 openai (CLI/SDK)
 llama.cpp
-jupyterlab
-ocrmypdf
-tesseract
 imagemagick
 libreoffice (headless)
 duckdb
-qdrant
+qdrant           # kontradikcia s vlastným rozhodnutím pre sqlite-vec (Fáza 4) — pozri "Zámerne neinštalovať"
 promptfoo
 langfuse
-rclone
-lazygit / gitui
-direnv
-watchexec / entr
-trivy
 semgrep
-afl++
 codex + bubblewrap
-tea (Gitea CLI klient)
 huggingface_hub / hf CLI
 transformers
 safetensors
 sentence-transformers
 tox / nox
-systemd-zram-generator
-libntl-dev
-libflint-dev
-libsodium-dev
 ```
 
 ## Zámerne neinštalovať
@@ -313,6 +330,7 @@ vLLM (CPU-only stroj)
 Kubernetes
 Redis / RabbitMQ / Kafka
 Milvus / Weaviate / Elasticsearch
+qdrant (rovnaký dôvod — Fáza 4 zámerne zvolila ľahký embedded sqlite-vec namiesto samostatnej vector DB služby)
 fail2ban (SSH iba cez Tailscale)
 Gitea (beží na Pi, nie tu)
 Open WebUI (centrálne na Macu)
