@@ -4,6 +4,38 @@
 
 ---
 
+## Princípy balíčkovania a adresárovej štruktúry
+
+### Priorita zdroja balíka
+
+```
+1. apt          → systémové balíky, security-critical (ufw, openssh, docker)
+2. jazykový nástroj (uv/npm/cargo) → dev knižnice, per-projekt izolácia
+3. natívny installer výrobcu (curl | sh) → Ollama, Tailscale, Claude Code
+4. AppImage/binary release → jednorazové nástroje bez balíka v repozitári
+```
+
+**Snap/Flatpak zámerne vynechané** — Snap má mount overhead a pomalší štart (opačný smer než chceš na CPU-only 16GB worker stroji), Flatpak je GUI-orientovaný (sandboxing cez Portals API), tento stroj je headless/CLI-first.
+
+### Adresárová štruktúra (FHS + XDG)
+
+```
+/usr/            → systémové balíky (apt) — nikdy sem ručne nič nepridávaj
+/usr/local/      → manuálne nainštalovaný softvér pre všetkých používateľov (make install cieľ)
+/opt/            → veľké samostatné aplikácie s vlastnou štruktúrou (napr. SageMath mimo apt)
+~/.local/bin/    → per-user binárky (claude-code, uv tool install sem cielia automaticky)
+~/.local/share/  → per-user aplikačné dáta
+~/.config/       → per-user konfigurácia (XDG_CONFIG_HOME), spravované cez chezmoi/stow
+~/.cache/        → cache, bezpečne mazateľné
+```
+
+**Pravidlo:** `~/.local/bin` musí byť v `PATH`. Každý `uv` projekt má vlastný `.venv` v projektovom adresári, nikdy globálny site-packages.
+
+**Nikdy:** `sudo pip install` alebo `sudo npm install -g` — zapisuje do systémových ciest spravovaných apt, spôsobuje root-owned súbory v user-space adresároch a permission chaos pri každej ďalšej aktualizácii (presne dôvod, prečo Claude Code dokumentácia varuje pred `sudo npm install -g`).
+
+---
+
+
 ## Fáza 1 — systém a sieť
 
 ```
@@ -12,6 +44,7 @@ openssh-server
 ufw
 git
 git-lfs
+gh
 syncthing
 rsync
 restic
@@ -32,13 +65,21 @@ jq
 yq
 ```
 
+IDE: **VS Code** (alebo VSCodium) + rozšírenia Remote SSH, Python, C/C++, Markdown All in One, Markdown Preview Enhanced, Docker
+
+Archívy a certifikáty: `zip`, `unzip`, `zstd`, `xz-utils`, `ca-certificates`, `gnupg`
+
 ## Fáza 2 — vývoj (jazyky, debugging, kvalita)
 
 ```
 python3
+python3-dev
 uv
 ruff
 pytest
+pytest-cov
+pytest-benchmark
+hypothesis
 mypy (alebo pyright)
 pre-commit
 build-essential
@@ -57,7 +98,15 @@ cppcheck
 clang-tidy
 shellcheck
 shfmt
+libssl-dev
+libffi-dev
+libgmp-dev
+libmpfr-dev
+libmpc-dev
+libfplll-dev
 ```
+
+Poznámka: `libfplll-dev`/`libgmp-dev`/`libmpfr-dev`/`libmpc-dev` sú potrebné najmä pri kompilácii fpylll alebo gmpy2 zo zdrojov. Ak `uv` nájde kompatibilný binárny wheel, nemusia byť potrebné, no ponechávajú sa ako súčasť výskumného/vývojového prostredia.
 
 ## Fáza 3 — lokálna AI
 
@@ -70,7 +119,16 @@ faster-whisper
 ffmpeg
 ```
 
+Voliteľné (poistka, zvyčajne netreba — PyPI wheel ctranslate2 býva self-contained): `libopenblas-dev`
+
 Voliteľné: llama.cpp CLI, reranker (neskôr podľa potreby)
+
+Ollama konfigurácia pre 16GB CPU-only stroj (systemd override pre `ollama.service`):
+```
+OLLAMA_MAX_LOADED_MODELS=1  # default je 3 pre CPU — bez tohto Ollama drží v RAM až 3 modely naraz
+OLLAMA_NUM_PARALLEL=1       # jedna inference požiadavka naraz (rieši paralelizmus v rámci JEDNÉHO modelu, nie počet modelov)
+OLLAMA_KEEP_ALIVE=5m        # po nečinnosti model uvoľniť
+```
 
 ## Fáza 4 — dokumenty a RAG
 
@@ -92,6 +150,7 @@ fastapi
 uvicorn
 httpx
 pydantic
+litellm      # unifikované API pre worker: jedno rozhranie pre Ollama/Claude/GPT/Gemini, netreba separátnu integráciu na providera
 ```
 
 Voliteľné: browser-use, xvfb, mitmproxy
@@ -99,8 +158,11 @@ Voliteľné: browser-use, xvfb, mitmproxy
 ## Fáza 6 — AI coding CLI
 
 ```
-nodejs (LTS) + npm
-claude-code (@anthropic-ai/claude-code)
+nodejs (LTS) + npm      # kvôli repomix, gemini-cli a ďalším JS nástrojom, nie kvôli claude-code
+claude-code
+  # preferované: oficiálny Anthropic APT stable repozitár (aktualizácie cez bežné apt update/upgrade)
+  # alternatíva: natívny installer curl -fsSL https://claude.ai/install.sh | bash
+  # npm inštaláciu (@anthropic-ai/claude-code) už nepoužívať pre nové nasadenie — deprecated cesta
 repomix
 llm (Simon Willison CLI)
 ast-grep
@@ -117,9 +179,12 @@ fplll
 fpylll
 gmpy2
 pycryptodome
+z3          # solver a CLI
 ```
 
-Voliteľné: pari-gp, ntl
+Python bindings (v konkrétnom uv projekte, nie globálne): `z3-solver`
+
+Voliteľné: sympy, pari-gp, ntl, flint
 
 ## Fáza 8 — testovanie náhodnosti (nové, doplnené)
 
@@ -133,19 +198,26 @@ Voliteľné: nist-sts, testu01, practrand (často nutná manuálna kompilácia)
 
 ```
 pip-audit
+gitleaks
+bandit
+hadolint
 ```
 
-Voliteľné: trivy, semgrep
+Voliteľné: trivy, semgrep, afl++ (fuzzing pre C/kryptografické implementácie)
 
 ## Fáza 10 — YubiKey a smartcard
 
 ```
 ykman
 yubikey-agent
-pam-u2f
+libpam-u2f
 pcscd
+pcsc-tools
 scdaemon
+opensc
 ```
+
+Voliteľné: `yubikey-personalization` — iba pre legacy alebo špecifické Yubico OTP/challenge-response použitie (ykman pokrýva FIDO2/PIV/OpenPGP/OATH ako primárny nástroj)
 
 ## Fáza 11 — sieťové a kryptografické nástroje
 
@@ -159,7 +231,16 @@ mtr
 dnsutils
 netcat
 socat
+iproute2
+ethtool
+iperf3
+traceroute
+whois
 ```
+
+Voliteľné: hping3, arp-scan
+
+Poznámka: `testssl.sh` nie je vo všetkých distribúciách bežný apt balík — inštalovať z oficiálneho upstream repozitára (git clone) alebo ako kontajner, nie predpokladať `apt install testssl.sh`.
 
 ## Fáza 12 — CLI pohodlie
 
@@ -211,7 +292,18 @@ direnv
 watchexec / entr
 trivy
 semgrep
+afl++
 codex + bubblewrap
+tea (Gitea CLI klient)
+huggingface_hub / hf CLI
+transformers
+safetensors
+sentence-transformers
+tox / nox
+systemd-zram-generator
+libntl-dev
+libflint-dev
+libsodium-dev
 ```
 
 ## Zámerne neinštalovať
@@ -225,4 +317,17 @@ fail2ban (SSH iba cez Tailscale)
 Gitea (beží na Pi, nie tu)
 Open WebUI (centrálne na Macu)
 nvtop (žiadna dedikovaná GPU)
+```
+
+## Prevádzkové veci (nie balíky, ale nutná konfigurácia)
+
+```
+LUKS full-disk encryption
+Ollama iba cez localhost/Tailscale, nikdy verejný port
+UFW default deny incoming
+restic — retention policy (koľko snapshotov držať, nielen že beží)
+restic — pravidelný test obnovy, nie iba úspešný snapshot
+Syncthing — adresáre a ignore pravidlá
+limity paralelizmu AI workeru (koľko jobov naraz pri 16GB RAM)
+ZRAM (systemd-zram-generator) — otestovať pri reálnej záťaži (Ollama + Playwright + VS Code súčasne), nie automaticky zapnúť na 100 % RAM bez merania
 ```
