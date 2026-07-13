@@ -87,7 +87,15 @@ faster-whisper
 ffmpeg
 ```
 
+Voliteľné (poistka, zvyčajne netreba — PyPI wheel ctranslate2 býva self-contained): `libopenblas-dev`
+
 Voliteľné: llama.cpp CLI, reranker (neskôr podľa potreby)
+
+Ollama konfigurácia pre 16GB CPU-only stroj:
+```
+OLLAMA_NUM_PARALLEL=1      # nikdy viac naraz — CPU context switching zabíja výkon
+OLLAMA_KEEP_ALIVE=5m       # model neostáva zbytočne v RAM, uvoľní miesto pre whisper/SageMath
+```
 
 ## Fáza 4 — dokumenty a RAG
 
@@ -163,13 +171,12 @@ Voliteľné: trivy, semgrep, afl++ (fuzzing pre C/kryptografické implementácie
 ```
 ykman
 yubikey-agent
-pam-u2f
+libpam-u2f
 pcscd
 pcsc-tools
 scdaemon
 opensc
-gnupg
-pinentry-curses
+yubikey-personalization
 ```
 
 ## Fáza 11 — sieťové a kryptografické nástroje
@@ -280,4 +287,5 @@ restic — retention policy (koľko snapshotov držať, nielen že beží)
 restic — pravidelný test obnovy, nie iba úspešný snapshot
 Syncthing — adresáre a ignore pravidlá
 limity paralelizmu AI workeru (koľko jobov naraz pri 16GB RAM)
+ZRAM (systemd-zram-generator) — otestovať pri reálnej záťaži (Ollama + Playwright + VS Code súčasne), nie automaticky zapnúť na 100 % RAM bez merania
 ```
