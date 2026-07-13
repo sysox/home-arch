@@ -12,6 +12,7 @@ openssh-server
 ufw
 git
 git-lfs
+gh
 syncthing
 rsync
 restic
@@ -32,13 +33,21 @@ jq
 yq
 ```
 
+IDE: **VS Code** (alebo VSCodium) + rozšírenia Remote SSH, Python, C/C++, Markdown All in One, Markdown Preview Enhanced, Docker
+
+Archívy a certifikáty: `zip`, `unzip`, `zstd`, `xz-utils`, `ca-certificates`, `gnupg`
+
 ## Fáza 2 — vývoj (jazyky, debugging, kvalita)
 
 ```
 python3
+python3-dev
 uv
 ruff
 pytest
+pytest-cov
+pytest-benchmark
+hypothesis
 mypy (alebo pyright)
 pre-commit
 build-essential
@@ -57,7 +66,15 @@ cppcheck
 clang-tidy
 shellcheck
 shfmt
+libssl-dev
+libffi-dev
+libgmp-dev
+libmpfr-dev
+libmpc-dev
+libfplll-dev
 ```
+
+Poznámka: `libfplll-dev`/`libgmp-dev`/`libmpfr-dev`/`libmpc-dev` sú nutné pre kompiláciu fpylll a gmpy2 vo Fáze 7 — bez nich pip/uv install zlyhá.
 
 ## Fáza 3 — lokálna AI
 
@@ -99,8 +116,8 @@ Voliteľné: browser-use, xvfb, mitmproxy
 ## Fáza 6 — AI coding CLI
 
 ```
-nodejs (LTS) + npm
-claude-code (@anthropic-ai/claude-code)
+nodejs (LTS) + npm      # kvôli repomix, gemini-cli a ďalším JS nástrojom, nie kvôli claude-code
+claude-code              # natívny installer (curl https://claude.ai/install.sh), npm je legacy/deprecated
 repomix
 llm (Simon Willison CLI)
 ast-grep
@@ -117,9 +134,10 @@ fplll
 fpylll
 gmpy2
 pycryptodome
+z3
 ```
 
-Voliteľné: pari-gp, ntl
+Voliteľné: sympy, pari-gp, ntl, flint
 
 ## Fáza 8 — testovanie náhodnosti (nové, doplnené)
 
@@ -133,9 +151,12 @@ Voliteľné: nist-sts, testu01, practrand (často nutná manuálna kompilácia)
 
 ```
 pip-audit
+gitleaks
+bandit
+hadolint
 ```
 
-Voliteľné: trivy, semgrep
+Voliteľné: trivy, semgrep, afl++ (fuzzing pre C/kryptografické implementácie)
 
 ## Fáza 10 — YubiKey a smartcard
 
@@ -144,7 +165,11 @@ ykman
 yubikey-agent
 pam-u2f
 pcscd
+pcsc-tools
 scdaemon
+opensc
+gnupg
+pinentry-curses
 ```
 
 ## Fáza 11 — sieťové a kryptografické nástroje
@@ -159,7 +184,14 @@ mtr
 dnsutils
 netcat
 socat
+iproute2
+ethtool
+iperf3
+traceroute
+whois
 ```
+
+Voliteľné: hping3, arp-scan
 
 ## Fáza 12 — CLI pohodlie
 
@@ -211,7 +243,18 @@ direnv
 watchexec / entr
 trivy
 semgrep
+afl++
 codex + bubblewrap
+tea (Gitea CLI klient)
+huggingface_hub / hf CLI
+transformers
+safetensors
+sentence-transformers
+tox / nox
+systemd-zram-generator
+libntl-dev
+libflint-dev
+libsodium-dev
 ```
 
 ## Zámerne neinštalovať
@@ -225,4 +268,16 @@ fail2ban (SSH iba cez Tailscale)
 Gitea (beží na Pi, nie tu)
 Open WebUI (centrálne na Macu)
 nvtop (žiadna dedikovaná GPU)
+```
+
+## Prevádzkové veci (nie balíky, ale nutná konfigurácia)
+
+```
+LUKS full-disk encryption
+Ollama iba cez localhost/Tailscale, nikdy verejný port
+UFW default deny incoming
+restic — retention policy (koľko snapshotov držať, nielen že beží)
+restic — pravidelný test obnovy, nie iba úspešný snapshot
+Syncthing — adresáre a ignore pravidlá
+limity paralelizmu AI workeru (koľko jobov naraz pri 16GB RAM)
 ```
