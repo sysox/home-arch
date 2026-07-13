@@ -74,7 +74,7 @@ libmpc-dev
 libfplll-dev
 ```
 
-Poznámka: `libfplll-dev`/`libgmp-dev`/`libmpfr-dev`/`libmpc-dev` sú nutné pre kompiláciu fpylll a gmpy2 vo Fáze 7 — bez nich pip/uv install zlyhá.
+Poznámka: `libfplll-dev`/`libgmp-dev`/`libmpfr-dev`/`libmpc-dev` sú potrebné najmä pri kompilácii fpylll alebo gmpy2 zo zdrojov. Ak `uv` nájde kompatibilný binárny wheel, nemusia byť potrebné, no ponechávajú sa ako súčasť výskumného/vývojového prostredia.
 
 ## Fáza 3 — lokálna AI
 
@@ -91,10 +91,11 @@ Voliteľné (poistka, zvyčajne netreba — PyPI wheel ctranslate2 býva self-co
 
 Voliteľné: llama.cpp CLI, reranker (neskôr podľa potreby)
 
-Ollama konfigurácia pre 16GB CPU-only stroj:
+Ollama konfigurácia pre 16GB CPU-only stroj (systemd override pre `ollama.service`):
 ```
-OLLAMA_NUM_PARALLEL=1      # nikdy viac naraz — CPU context switching zabíja výkon
-OLLAMA_KEEP_ALIVE=5m       # model neostáva zbytočne v RAM, uvoľní miesto pre whisper/SageMath
+OLLAMA_MAX_LOADED_MODELS=1  # default je 3 pre CPU — bez tohto Ollama drží v RAM až 3 modely naraz
+OLLAMA_NUM_PARALLEL=1       # jedna inference požiadavka naraz (rieši paralelizmus v rámci JEDNÉHO modelu, nie počet modelov)
+OLLAMA_KEEP_ALIVE=5m        # po nečinnosti model uvoľniť
 ```
 
 ## Fáza 4 — dokumenty a RAG
@@ -117,6 +118,7 @@ fastapi
 uvicorn
 httpx
 pydantic
+litellm      # unifikované API pre worker: jedno rozhranie pre Ollama/Claude/GPT/Gemini, netreba separátnu integráciu na providera
 ```
 
 Voliteľné: browser-use, xvfb, mitmproxy
@@ -125,7 +127,10 @@ Voliteľné: browser-use, xvfb, mitmproxy
 
 ```
 nodejs (LTS) + npm      # kvôli repomix, gemini-cli a ďalším JS nástrojom, nie kvôli claude-code
-claude-code              # natívny installer (curl https://claude.ai/install.sh), npm je legacy/deprecated
+claude-code
+  # preferované: oficiálny Anthropic APT stable repozitár (aktualizácie cez bežné apt update/upgrade)
+  # alternatíva: natívny installer curl -fsSL https://claude.ai/install.sh | bash
+  # npm inštaláciu (@anthropic-ai/claude-code) už nepoužívať pre nové nasadenie — deprecated cesta
 repomix
 llm (Simon Willison CLI)
 ast-grep
@@ -142,8 +147,10 @@ fplll
 fpylll
 gmpy2
 pycryptodome
-z3
+z3          # solver a CLI
 ```
+
+Python bindings (v konkrétnom uv projekte, nie globálne): `z3-solver`
 
 Voliteľné: sympy, pari-gp, ntl, flint
 
@@ -176,8 +183,9 @@ pcscd
 pcsc-tools
 scdaemon
 opensc
-yubikey-personalization
 ```
+
+Voliteľné: `yubikey-personalization` — iba pre legacy alebo špecifické Yubico OTP/challenge-response použitie (ykman pokrýva FIDO2/PIV/OpenPGP/OATH ako primárny nástroj)
 
 ## Fáza 11 — sieťové a kryptografické nástroje
 
@@ -199,6 +207,8 @@ whois
 ```
 
 Voliteľné: hping3, arp-scan
+
+Poznámka: `testssl.sh` nie je vo všetkých distribúciách bežný apt balík — inštalovať z oficiálneho upstream repozitára (git clone) alebo ako kontajner, nie predpokladať `apt install testssl.sh`.
 
 ## Fáza 12 — CLI pohodlie
 
