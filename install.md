@@ -51,12 +51,22 @@ Rozhodnuté: **Gitea beží na Raspberry Pi + USB SSD** (always-on), nie na Thin
 | Profilovanie a benchmarky | perf, hyperfine, time | Esenciálne pre výskumné implementácie |
 | Shell kvalita | shellcheck, shfmt | Nice-to-have, užitočné pre infra skripty |
 | Kontajnery | Docker Engine + Compose plugin | Esenciálne; nie súčasne s Podman bez dôvodu |
+| **Claude CLI** | **claude-code** | **Esenciálne — agentický CLI od Anthropicu na lokálnu analýzu/úpravu kódu** |
+| **Prompt packer** | **repomix** (ex-repopack) — zabalí celý repo do jedného markdownu pre Claude | **Esenciálne** |
+| **Prompt packer (alt)** | **files-to-prompt** — jednoduchšia Python alternatíva | Nice-to-have (inštalácia cez `uv tool install`) |
+| **JS runtime pre AI CLI** | **nodejs + npm** | **Esenciálne — vyžaduje repomix aj claude-code** |
+| **CLI pre iné cloud modely** | **llm** (Simon Willison, provider-agnostic: OpenAI/Gemini/Anthropic/lokálne cez plugin) | Esenciálne — jeden CLI namiesto troch |
+| **GPT CLI (alt/oficiálne)** | **openai** Python CLI/SDK (`pip/uv install openai`) | Nice-to-have, ak treba priamy OpenAI-špecifický prístup |
+| **Gemini CLI** | **gemini-cli** (Google, oficiálny agentický CLI) | Nice-to-have, ak sa Gemini reálne používa mimo edu appky |
+| **Multi-model chat CLI (alt)** | **aichat** alebo **mods** — rýchle jednorazové promptovanie z terminálu/pipe | Nice-to-have |
+| **Štrukturálny kódový search** | **ast-grep** — AST-based vyhľadávanie, využíva ho aj Claude Code na presný refactoring | Esenciálne |
 | Git klient | git, git-lfs | Esenciálne |
 | GitHub CLI | gh | Esenciálne pre issues, PR, releases, automatizáciu |
 | Gitea CLI | tea | Nice-to-have (klient k Gitea na Pi) |
 | Git hosting | — (Gitea beží na Raspberry Pi, viď sekcia Pi) | ThinkPad je iba klient/worker |
 | Git remotes | lokálna Gitea (na Pi) + GitHub | Esenciálne; Gitea súkromne, GitHub verejne/spolupráca |
-| Sync | Syncthing (s Windows ThinkPad) | Esenciálne pre dokumenty/dáta, nie pre aktívne Git checkouty |
+| Sync | **syncthing** (balík, s Windows ThinkPad) | Esenciálne — vypadol z pôvodného apt zoznamu |
+| OOM ochrana | **earlyoom** | Esenciálne — chráni pred zamrznutím pri vyčerpaní RAM počas batch/LLM behu |
 | Prenos a recovery snapshoty | rsync | Esenciálne; architektúra ho už používa |
 | Backup | restic + systemd timer | Esenciálne; versioned a šifrovaný backup |
 | Off-site/cloud copy | rclone | Nice-to-have ako ďalší backup target |
@@ -71,7 +81,7 @@ Rozhodnuté: **Gitea beží na Raspberry Pi + USB SSD** (always-on), nie na Thin
 | Odolné vzdialené spojenie | mosh | Nice-to-have pri nestabilnej sieti |
 | Markdown | VS Code + Markdown All in One + Markdown Preview Enhanced | Esenciálne |
 | Markdown CLI | glow alebo mdcat | Nice-to-have |
-| Diff/merge | Meld + difftastic | Esenciálne/Nice-to-have |
+| Diff/merge | Meld + difftastic | Esenciálne — difftastic je nutný na vizuálnu kontrolu štrukturálnych zmien generovaných AI |
 | CLI vyhľadávanie | ripgrep, fd, fzf | Esenciálne |
 | CLI pohodlie | bat, tree, jq, yq | Esenciálne |
 | Disková orientácia | ncdu alebo duf | Nice-to-have |
@@ -85,9 +95,9 @@ Rozhodnuté: **Gitea beží na Raspberry Pi + USB SSD** (always-on), nie na Thin
 | Databázové nástroje | sqlite3 CLI | Esenciálne |
 | Analytická databáza | DuckDB | Nice-to-have pre experimentálne dáta a veľké CSV/Parquet |
 | Linter/analyzátor | cppcheck, clang-tidy, ruff | Esenciálne |
-| Secrets pre dev | sops + age | Esenciálne |
+| Secrets pre dev | sops + **age** (šifrovací backend, bez ktorého sops nefunguje) | Esenciálne |
 | Password manager | KeePassXC | Esenciálne |
-| YubiKey nástroje | ykman, yubikey-agent, pam-u2f | Esenciálne/voliteľné; PAM meniť až po overení recovery prístupu |
+| YubiKey nástroje | ykman, yubikey-agent, pam-u2f, **scdaemon** (Smart Card Daemon — nutný pre komunikáciu s YubiKey cez USB pri SSH auth) | Esenciálne/voliteľné; PAM meniť až po overení recovery prístupu |
 | Šifrovanie disku | LUKS full-disk encryption | Esenciálne, rieši sa pri inštalácii OS |
 | Automatické security aktualizácie | unattended-upgrades + needrestart | Esenciálne; bez automatického rebootu |
 | Firmware | fwupd | Esenciálne pre BIOS a zariadenia podporované cez LVFS |
@@ -104,18 +114,36 @@ Rozhodnuté: **Gitea beží na Raspberry Pi + USB SSD** (always-on), nie na Thin
 ```bash
 sudo apt update && sudo apt upgrade -y
 
-# Základ, CLI komfort, monitoring
+# Základ, CLI komfort, monitoring, stabilita systému
 sudo apt install -y curl wget git git-lfs tmux mosh btop ufw openssh-server \
   jq yq ripgrep fd-find fzf bat tree ncdu duf \
-  smartmontools nvme-cli lm-sensors powertop \
+  smartmontools nvme-cli lm-sensors powertop earlyoom \
   meld cppcheck clang-tidy shellcheck shfmt \
   build-essential cmake ninja-build pkg-config gdb valgrind strace ltrace \
   linux-tools-common linux-tools-generic hyperfine \
   poppler-utils qpdf pandoc imagemagick sqlite3 ffmpeg \
-  unattended-upgrades needrestart fwupd
+  unattended-upgrades needrestart fwupd \
+  syncthing age scdaemon pcscd \
+  difftastic
 
 # uv (Python projekty, nahrádza venv+pip)
 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# nodejs + npm (potrebné pre repomix a claude-code)
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Claude CLI a prompt packery
+npm install -g @anthropic-ai/claude-code
+npm install -g repomix
+uv tool install files-to-prompt
+
+# Multi-model CLI (voliteľné, provider-agnostic)
+uv tool install llm
+# gemini-cli podľa aktuálnych inštrukcií Google (npm alebo natívny binár — over pred inštaláciou)
+
+# ast-grep (štrukturálny kódový search pre AI refactoring)
+cargo install ast-grep --locked   # alebo cez balíček distribúcie, ak dostupný
 
 # Ollama
 curl -fsSL https://ollama.com/install.sh | sh
@@ -138,8 +166,8 @@ curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
 sudo apt install -y gh
 
-# KeePassXC, sops/age, restic
-sudo apt install -y keepassxc restic
+# KeePassXC, sops, restic
+sudo apt install -y keepassxc sops restic
 
 # Playwright (v uv-spravovanom Python venv projektu)
 uv pip install playwright
@@ -147,6 +175,13 @@ uv run playwright install --with-deps
 
 # Automatické security updaty (bez auto-rebootu)
 sudo dpkg-reconfigure --priority=low unattended-upgrades
+
+# Syncthing + earlyoom ako systemd služby
+sudo systemctl enable --now syncthing@$USER
+sudo systemctl enable --now earlyoom
+
+# scdaemon/pcscd pre YubiKey cez USB
+sudo systemctl enable --now pcscd
 ```
 
 ---
@@ -215,3 +250,6 @@ YubiKey je hardvér (2× YubiKey, kat. 16 — Používané), nie per-stroj softv
 - **nvtop** odstránené — Ryzen 4750U je APU bez dedikovanej GPU, nemá čo zobrazovať.
 - **fail2ban** zatiaľ netreba — SSH ide iba cez Tailscale, nie je verejne dostupné.
 - **Open WebUI na Linux ThinkPade** nie je nutné — môže používať centrálnu inštanciu na Macu.
+- **Claude/AI CLI ekosystém doplnený**: claude-code + repomix (prompt packing repozitára pre Claude) + nodejs/npm ako runtime; files-to-prompt ako ľahšia alternatíva cez `uv tool`. Pre GPT/Gemini: `llm` (provider-agnostic, jeden nástroj namiesto troch) ako primárna voľba, `openai` SDK/CLI a `gemini-cli` len ak treba provider-špecifické funkcie.
+- **ast-grep + difftastic** presunuté na Esenciálne — priamo podporujú AI-asistovaný refactoring a kontrolu zmien.
+- **earlyoom, syncthing (balík), age, scdaemon/pcscd** doplnené — chýbali v pôvodnom apt zozname, pritom sú nutné pre stabilitu (OOM), sync, sops a YubiKey SSH auth.
