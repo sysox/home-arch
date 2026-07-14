@@ -1,0 +1,60 @@
+## Princíp: 3-stupňová eskalačná rebríček, nie "vyber si obľúbený model"
+
+Platené (Claude/GPT/Gemini o level vyššie) sú **drahé na quotu, nie na peniaze** — Pro/Max tier má týždenné/mesačné limity správ. Preto platí: čím vyššie v rebríčku, tým menej volaní, ale vyššia hodnota per volanie.
+
+```
+Stupeň 1: Lokálne (T14 Linux / Mac Ollama) — zadarmo, offline, neobmedzené
+Stupeň 2: e-INFRA (Qwen/DeepSeek/GLM/Kimi) — takmer zadarmo, objemové
+Stupeň 3: Platené (Claude/GPT/Gemini) — limitovaná quota, len kľúčové rozhodnutia
+```
+
+Eskalácia ide **hore len keď nižší stupeň zlyhá alebo je úloha klasifikovaná ako high-stakes** (architektúra, bezpečnostný review, kryptografická korektnosť) — nie automaticky pre každý task.
+
+---
+
+## Rozdelenie podľa zariadenia
+
+| Zariadenie | Rola |
+|---|---|
+| **Linux T14** | Vývoj, agent orchestrácia (Python/CLI), testovanie agentov, lokálne modely (Granite/Ministral), git, RAG index |
+| **Windows T14** | **Office-integrovaní agenti** — Claude for Excel/PowerPoint/Outlook (natívne v MS Office), admin/výučba (MU systémy bežia na Windows lepšie), GUI automatizácia cez Claude in Chrome ak treba web workflow |
+| **Mac 32GB** | Citlivé dokumenty (Mistral Small 24B lokálne), výskum, vision/OCR, ťažšie lokálne úlohy |
+| **Pi 5** | Orchestrátor — LiteLLM proxy, routing logika, scheduler pre agentov |
+
+Windows T14 tým pádom nie je duplicita Linux T14, ale samostatná **agent-runtime vrstva pre Office/admin prácu**, kde Claude Desktop appka a Office-integrácie fungujú prirodzenejšie ako cez Linux CLI.
+
+---
+
+## Kedy platený model (Stupeň 3) — konkrétne triggre
+
+Použiť **len** keď nastane jedno z týchto:
+
+1. **Architektonické rozhodnutie** — nový systém/refaktor, kde zlá voľba stojí týždne (napr. tvoj Model Router design, PlanIt v3 spec)
+2. **Bezpečnostný/kryptografický review** — HNP/LLL/ROCA korektnosť, kde chyba = zlý výsledok výskumu
+3. **Finálny code review pred mergom** do repa (Claude Code rola, ktorú už máš)
+4. **Cross-check/druhý názor** pri nejednoznačnosti — GPT alebo Gemini ako nezávislý audit Claude výstupu (nie vždy všetky 3 naraz — to je plytvanie quotou na tú istú otázku)
+5. **Multimodálny vstup** (obrázky, PDF s komplexnou štruktúrou) → GPT alebo Gemini majú širší multimodálny handling
+
+**Nepoužívať platené na:** bulk generovanie kódu, opakované iterácie na tom istom probléme, shell scripty, autocomplete, sumarizácie — toto ide na e-INFRA.
+
+### Rozdelenie rolí medzi 3 platené (aby si ich nepoužíval redundantne)
+
+| Model | Primárna rola |
+|---|---|
+| **Claude** | Implementácia, Claude Code (repo zmeny), primárny design partner — máš už zabehnuté |
+| **GPT** | Finálny review/multimodalita, druhý názor keď si neistý Claude výstupom |
+| **Gemini** | Veľký kontext (celé repo/dlhé dokumenty naraz), Google ekosystém, alternatívny audit |
+
+---
+
+## Proces (jednoduchý workflow, nie zložitý agent framework najprv)
+
+1. **Úloha príde** → rýchla mentálna klasifikácia: rutina vs. rozhodnutie
+2. **Rutina** → rovno na e-INFRA (`coder`/`agentic` alias) alebo lokálny model, ak treba offline
+3. **Rozhodnutie/design** → Claude (alebo GPT/Gemini ak chceš druhý názor) → z výstupu vznikne **spec/task list**
+4. **Spec sa hodí do e-INFRA** na bulk implementáciu podľa spec
+5. **Výsledok späť na Claude Code** na review/integráciu do repa
+
+Toto je v podstate to, čo máš navrhnuté v `ai_workflow_architecture_v2.md` (Adapter Pattern, Workflow Engine, Model Router) — len teraz vieš explicitne, že Windows T14 = office/agent runtime vrstva, nie duplicitný dev stroj.
+
+Chceš, aby som ti spravil konkrétny routing config (napr. YAML/JSON pravidlá pre tvoj Model Router — task-type → tier → model), alebo ti stačí táto koncepčná mapa?
